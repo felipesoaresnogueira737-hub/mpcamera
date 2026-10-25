@@ -1,0 +1,60 @@
+name: Build APK
+
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Localizar projeto (extrai .zip se precisar)
+        run: |
+          if [ -z "$(find . -maxdepth 4 -name settings.gradle.kts -not -path './.git/*' | head -n1)" ]; then
+            Z=$(find . -maxdepth 2 -name '*.zip' -not -path './.git/*' | head -n1)
+            if [ -n "$Z" ]; then
+              echo "Extraindo $Z"
+              unzip -o "$Z" -d _extraido
+            fi
+          fi
+          S=$(find . -maxdepth 4 -name settings.gradle.kts -not -path './.git/*' | head -n1)
+          if [ -z "$S" ]; then
+            echo "ERRO: settings.gradle.kts nao encontrado. Arquivos no repositorio:"
+            find . -not -path './.git/*' -type f | head -80
+            exit 1
+          fi
+          D=$(dirname "$S")
+          echo "Projeto em: $D"
+          echo "PROJECT_DIR=$D" >> "$GITHUB_ENV"
+          for f in build.gradle.kts app/build.gradle.kts app/src/main/AndroidManifest.xml app/src/main/res/layout/activity_main.xml; do
+            [ -f "$D/$f" ] || { echo "ERRO: faltando $D/$f"; exit 1; }
+          done
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Baixar modelo do MediaPipe
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: |
+          mkdir -p app/src/main/assets
+          curl -fL -o app/src/main/assets/hand_landmarker.task \
+            https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/latest/hand_landmarker.task
+          ls -l app/src/main/assets
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: 8.7
+
+      - name: Build debug APK
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: gradle assembleDebug --console=plain
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: app-debug-apk
+          path: ${{ env.PROJECT_DIR }}/app/build/outputs/apk/debug/*.apk
